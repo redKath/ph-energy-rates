@@ -59,7 +59,7 @@ uv run pytest        # no network, no OCR, no LLM
 ## Limitations
 
 - Residential customers only; three utilities; about a year of history each.
-- Not verified: the CI workflow. The `docker compose` database was tested (migration, collection, API) on Docker Desktop for Windows.
+- The `docker compose` database was tested (migration, collection, API) only on Docker Desktop for Windows.
 - Older source documents were sampled, not checked. A document whose layout the parser rejects is skipped and reported in the run.
 - CAPELCO generation charge is filled for only 10 of 105 months (see [data gotchas](docs/data-gotchas.md)); the rest have totals only.
 - If a source revises a month, both values are stored; the API does not yet pick a latest one.
