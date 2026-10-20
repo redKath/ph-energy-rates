@@ -73,3 +73,7 @@ uv run pytest        # no network, no OCR, no LLM
 - PSGC codes and ERC/NEA IDs for utilities; province filtering depends on them.
 - Component-level rates (generation, transmission, distribution, taxes) in a separate table.
 - Scheduled collection, and an MCP server over the service layer.
+
+## About
+
+This project was started as a prototype for the [BetterGovPH Fellowship 2026](https://fellowship.bettergov.ph/) Energy challenge (one open energy data layer for the Philippines). It is an independent project and is not affiliated with or endorsed by BetterGovPH, DOE, or any government agency.
