@@ -10,7 +10,7 @@ Code is MIT-licensed. The data is intended to be released under CC BY 4.0.
 
 | Utility | Source format | Method | Months |
 |---|---|---|---|
-| BENECO | HTML fragments | HTML parser, components cross-checked against the total | 2024-12 to 2026-09 (16 months; 7 rejected, see data gotchas) |
+| BENECO | HTML fragments | HTML parser, components cross-checked against the total | 2024-12 to 2026-10 (17 months; 7 rejected, see data gotchas) |
 | Meralco | Text PDF | PDF parser, cross-checked against the bill table | 2025-11 to 2026-10 |
 | CAPELCO | HTML summary table + scanned PDFs | Totals from the table; Docling OCR adds generation for the latest 12 months, and must match the table | 2018-01 to 2026-09 (105 months; generation for 10) |
 
