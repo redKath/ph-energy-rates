@@ -12,7 +12,7 @@ from ph_energy_data.domain.enums import (
     UtilityType,
 )
 
-# Rates are PHP per kWh to 4 decimals; JSON consumers get a number, not a string.
+# Rates are PHP per kWh to 4 decimals, serialized as JSON numbers.
 Rate = Annotated[Decimal, PlainSerializer(float, return_type=float, when_used="json")]
 
 

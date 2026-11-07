@@ -22,7 +22,7 @@ Needs Python 3.12+, [uv](https://docs.astral.sh/uv/) and PostgreSQL 16+ (develop
 
 ```
 uv sync                       # add --extra ocr for scanned PDFs (large: PyTorch + models)
-cp .env.example .env          # set PH_ENERGY_DATABASE_URL if your Postgres differs
+cp .env.example .env          # set POSTGRES_PASSWORD and the matching password in PH_ENERGY_DATABASE_URL
 docker compose up -d db       # Postgres 16 on 127.0.0.1:5432, or use any Postgres
 uv run alembic upgrade head
 uv run ph-energy collect beneco

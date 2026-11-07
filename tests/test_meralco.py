@@ -1,12 +1,14 @@
+import io
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pdfplumber
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from ph_energy_data.collectors.base import FetchedDocument
-from ph_energy_data.collectors.meralco import LISTING_URL, collector
+from ph_energy_data.collectors.base import ExtractionError, FetchedDocument
+from ph_energy_data.collectors.meralco import LISTING_URL, MeralcoCollector, parse_bills_text
 from ph_energy_data.config import Settings
 from ph_energy_data.domain.enums import ExtractionMethod, RateStatus, RunStatus
 from ph_energy_data.services.pipeline import run_collector
@@ -19,14 +21,20 @@ OCT = f"{BASE}/2026-10/10-2026_residential_bills.pdf"
 SEP = f"{BASE}/2026-09/09-2026_residential_bills.pdf"
 PDF = (FIXTURES / "meralco" / "residential_bills_2026-10.pdf").read_bytes()
 LISTING = (FIXTURES / "meralco" / "listing.html").read_bytes()
+collector = MeralcoCollector()
 
 
 def _document(url: str = OCT, content: bytes = PDF) -> FetchedDocument:
     return FetchedDocument(url, content, "application/pdf", datetime.now(UTC))
 
 
+def _first_page_text(content: bytes) -> str:
+    with pdfplumber.open(io.BytesIO(content)) as pdf:
+        return pdf.pages[0].extract_text() or ""
+
+
 def test_extracts_overall_rate_and_generation() -> None:
-    (rate,) = collector.extract(_document())
+    (rate,) = collector.extract(_document(), {})
     assert rate.period == "2026-10"
     assert rate.rate_per_kwh == Decimal("15.0615")
     assert rate.generation_charge_per_kwh == Decimal("10.2005")
@@ -34,39 +42,63 @@ def test_extracts_overall_rate_and_generation() -> None:
 
 
 def test_period_must_match_url() -> None:
-    with pytest.raises(ValueError, match="URL says"):
-        collector.extract(_document(url=SEP))
+    with pytest.raises(ExtractionError, match="URL says"):
+        collector.extract(_document(url=SEP), {})
 
 
 def test_unreadable_pdf_raises() -> None:
-    with pytest.raises(ValueError, match="unreadable"):
-        collector.extract(_document(content=b"not a pdf"))
+    with pytest.raises(ExtractionError, match="unreadable"):
+        collector.extract(_document(content=b"not a pdf"), {})
+
+
+OCTOBER_TEXT = _first_page_text(PDF)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("no heading here", "billing month not found"),
+        (OCTOBER_TEXT.replace("October 2026", "Octember 2026"), "unrecognised billing month"),
+        (OCTOBER_TEXT.replace("For Non-Lifeline Customers", "For Others"), "table not found"),
+        (OCTOBER_TEXT.replace("\n200 ", "\n201 "), "no 200 kWh row"),
+        # Total bill 3,012.30 -> 3,112.30: no longer equals 200 x the printed rate.
+        (OCTOBER_TEXT.replace("3,012.30", "3,112.30"), "disagrees with bill total"),
+        # Generation bill 2,040.10 -> 2,140.10: no longer equals 200 x the printed generation rate.
+        (OCTOBER_TEXT.replace("2,040.10", "2,140.10"), "disagrees with bill"),
+    ],
+)
+def test_unrecognised_text_raises(text: str, message: str) -> None:
+    with pytest.raises(ExtractionError, match=message):
+        parse_bills_text(text, OCT)
 
 
 def test_discovers_bill_links_from_listing() -> None:
-    urls = collector.discover(FakeFetcher(LISTING))
+    urls = collector.discover(FakeFetcher(LISTING)).urls
     assert OCT in urls
     assert len(urls) == len(set(urls)) == 4
-    assert all("residential_bills" in u for u in urls)
+    assert all("residential_bills" in url for url in urls)
 
 
 def test_bad_document_does_not_block_others(
-    session_factory: sessionmaker[Session], archive: LocalArchive
+    session_factory: sessionmaker[Session], archive: LocalArchive, settings: Settings
 ) -> None:
     fetcher = RoutingFetcher(
-        {LISTING_URL: LISTING, OCT: PDF, SEP: b"<html>not a pdf</html>"}, "application/pdf"
+        {
+            LISTING_URL: (LISTING, "text/html"),
+            OCT: (PDF, "application/pdf"),
+            SEP: (b"<html>not a pdf</html>", "application/pdf"),
+        }
     )
-    # Listing pages are HTML; the routing fetcher serves one content type for brevity.
-    run = run_collector(
+    summary = run_collector(
         collector,
         session_factory=session_factory,
         fetcher=fetcher,
         archive=archive,
-        settings=Settings(),
+        settings=settings,
     )
-    assert run.status is RunStatus.FAILED
-    assert "09-2026_residential_bills.pdf" in (run.error or "")
-    assert run.rates_created == 1
+    assert summary.status is RunStatus.FAILED
+    assert "09-2026_residential_bills.pdf" in (summary.error or "")
+    assert summary.rates_created == 1
     with session_factory() as session:
         (stored,) = session.scalars(select(RateObservation)).all()
     assert (stored.period, stored.status) == ("2026-10", RateStatus.PUBLISHED)
@@ -86,7 +118,7 @@ def test_layout_variants(
 ) -> None:
     content = (FIXTURES / "meralco" / f"residential_bills_{name}.pdf").read_bytes()
     url = f"{BASE}/{url_month}_residential_bills.pdf"
-    (extracted,) = collector.extract(_document(url, content))
+    (extracted,) = collector.extract(_document(url, content), {})
     assert (extracted.period, extracted.rate_per_kwh) == (period, Decimal(rate))
     if generation:
         assert extracted.generation_charge_per_kwh == Decimal(generation)

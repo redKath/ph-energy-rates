@@ -5,7 +5,7 @@ from ph_energy_data.domain.enums import ExtractionMethod, RateBasis, RateStatus
 from ph_energy_data.domain.models import ExtractedRate
 from ph_energy_data.validation.rules import Context, validate
 
-SETTINGS = Settings()
+SETTINGS = Settings(database_url="sqlite://")
 
 
 def _rate(value: str = "10", **overrides: object) -> ExtractedRate:
@@ -16,7 +16,7 @@ def _rate(value: str = "10", **overrides: object) -> ExtractedRate:
         "extraction_method": ExtractionMethod.HTML_PARSER,
         "extractor_version": "test-1",
     }
-    return ExtractedRate(**{**fields, **overrides})  # type: ignore[arg-type]
+    return ExtractedRate(**{**fields, **overrides})
 
 
 def _validate(rate: ExtractedRate, previous: str | None = None) -> tuple[RateStatus, list[str]]:

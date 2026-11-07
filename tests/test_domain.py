@@ -20,7 +20,7 @@ def _rate(**overrides: object) -> RateObservation:
         "status": RateStatus.PUBLISHED,
         "created_at": datetime(2026, 10, 20, tzinfo=UTC),
     }
-    return RateObservation(**{**fields, **overrides})  # type: ignore[arg-type]
+    return RateObservation(**{**fields, **overrides})
 
 
 @pytest.mark.parametrize("period", ["2026-09", "2018-01", "2026-12"])

@@ -4,6 +4,7 @@ from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -26,13 +27,13 @@ from ph_energy_data.domain.enums import (
 
 
 def _enum[E: StrEnum](cls: type[E]) -> Enum:
-    # Stored as text with a CHECK constraint so SQLite and Postgres behave the same.
+    # Text column with a CHECK constraint, which works the same on SQLite and Postgres.
     return Enum(
         cls,
         native_enum=False,
         create_constraint=True,
         length=32,
-        values_callable=lambda e: [m.value for m in e],
+        values_callable=lambda members: [member.value for member in members],
         name=f"ck_{cls.__name__.lower()}",
     )
 
@@ -70,6 +71,16 @@ class RateObservation(Base):
     __tablename__ = "rate_observation"
     __table_args__ = (
         UniqueConstraint("utility_id", "period", "customer_class", "source_document_id"),
+        CheckConstraint(
+            "length(period) = 7 AND substr(period, 5, 1) = '-' "
+            "AND substr(period, 6, 2) BETWEEN '01' AND '12'",
+            name="ck_rate_observation_period_format",
+        ),
+        CheckConstraint("rate_per_kwh >= 0", name="ck_rate_observation_rate_non_negative"),
+        CheckConstraint(
+            "generation_charge_per_kwh IS NULL OR generation_charge_per_kwh >= 0",
+            name="ck_rate_observation_generation_non_negative",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

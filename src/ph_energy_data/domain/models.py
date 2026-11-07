@@ -9,13 +9,14 @@ from ph_energy_data.domain.enums import (
     ExtractionMethod,
     RateBasis,
     RateStatus,
-    RunStatus,
     UtilityType,
 )
 
-Slug = Annotated[str, StringConstraints(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
+SLUG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 # Billing month, ISO 8601 year-month.
-Period = Annotated[str, StringConstraints(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")]
+PERIOD_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
+Slug = Annotated[str, StringConstraints(pattern=SLUG_PATTERN)]
+Period = Annotated[str, StringConstraints(pattern=PERIOD_PATTERN)]
 PhpPerKwh = Annotated[Decimal, Field(ge=0, max_digits=10, decimal_places=4)]
 
 
@@ -73,15 +74,3 @@ class RateObservation(_Model):
     status: RateStatus
     flags: list[str] = []
     created_at: datetime | None = None
-
-
-class PipelineRun(_Model):
-    id: int | None = None
-    utility_id: Slug
-    started_at: datetime
-    finished_at: datetime | None = None
-    status: RunStatus
-    documents_fetched: int = 0
-    rates_created: int = 0
-    rates_flagged: int = 0
-    error: str | None = None

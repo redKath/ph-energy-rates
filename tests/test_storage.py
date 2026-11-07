@@ -51,22 +51,54 @@ def _rate(source_id: int) -> RateObservation:
     )
 
 
+def _stored_source(session: Session) -> SourceDocument:
+    session.add(Utility(id="beneco", name="BENECO", type=UtilityType.ELECTRIC_COOPERATIVE))
+    document = SourceDocument(
+        utility_id="beneco",
+        url="https://www.beneco.com.ph/rates.php",
+        fetched_at=datetime(2026, 10, 20, tzinfo=UTC),
+        content_type="text/html",
+        sha256="0" * 64,
+        archive_path="data/archive/beneco/x.html",
+    )
+    session.add(document)
+    session.flush()
+    return document
+
+
 def test_duplicate_observation_rejected(db_url: str) -> None:
     command.upgrade(_alembic(), "head")
     with Session(create_engine(db_url)) as session:
-        session.add(Utility(id="beneco", name="BENECO", type=UtilityType.ELECTRIC_COOPERATIVE))
-        doc = SourceDocument(
-            utility_id="beneco",
-            url="https://www.beneco.com.ph/rates.php",
-            fetched_at=datetime(2026, 10, 20, tzinfo=UTC),
-            content_type="text/html",
-            sha256="0" * 64,
-            archive_path="data/archive/beneco/x.html",
-        )
-        session.add(doc)
+        source_id = _stored_source(session).id
+        session.add(_rate(source_id))
         session.flush()
-        session.add(_rate(doc.id))
-        session.flush()
-        session.add(_rate(doc.id))
+        session.add(_rate(source_id))
         with pytest.raises(IntegrityError):
             session.flush()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"period": "2026-13"},
+        {"period": "2026-9"},
+        {"period": "May 2026"},
+        {"rate_per_kwh": Decimal("-1")},
+        {"generation_charge_per_kwh": Decimal("-0.5")},
+    ],
+)
+def test_invalid_rate_rejected_by_database(db_url: str, overrides: dict[str, object]) -> None:
+    command.upgrade(_alembic(), "head")
+    with Session(create_engine(db_url)) as session:
+        rate = _rate(_stored_source(session).id)
+        for field, value in overrides.items():
+            setattr(rate, field, value)
+        session.add(rate)
+        with pytest.raises(IntegrityError):
+            session.flush()
+
+
+def test_migration_can_be_reversed(db_url: str) -> None:
+    command.upgrade(_alembic(), "head")
+    command.downgrade(_alembic(), "0001")
+    command.upgrade(_alembic(), "head")

@@ -18,21 +18,25 @@ from ph_energy_data.api.schemas import (
     UtilityOut,
 )
 from ph_energy_data.domain.enums import RateStatus, UtilityType
+from ph_energy_data.domain.models import PERIOD_PATTERN, SLUG_PATTERN
 from ph_energy_data.services import rates as service
 
 router = APIRouter(prefix="/v1")
 SessionDep = Annotated[Session, Depends(get_session)]
-PeriodQuery = Annotated[str | None, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")]
+PeriodQuery = Annotated[str | None, Query(pattern=PERIOD_PATTERN)]
+UtilityIdQuery = Annotated[str | None, Query(pattern=SLUG_PATTERN)]
 
 
 @router.get("/utilities", response_model=list[UtilityOut])
 def list_utilities(
     session: SessionDep,
-    type: UtilityType | None = None,
-    province: Annotated[str | None, Query(description="PSGC province code prefix")] = None,
+    utility_type: Annotated[UtilityType | None, Query(alias="type")] = None,
+    province: Annotated[
+        str | None, Query(pattern=r"^\d{1,10}$", description="PSGC province code prefix")
+    ] = None,
 ) -> list[UtilityOut]:
-    rows = service.list_utilities(session, type=type, province=province)
-    return [UtilityOut.model_validate(u) for u in rows]
+    rows = service.list_utilities(session, utility_type=utility_type, province=province)
+    return [UtilityOut.model_validate(utility) for utility in rows]
 
 
 @router.get("/utilities/{utility_id}", response_model=UtilityOut)
@@ -46,7 +50,7 @@ def get_utility(utility_id: str, session: SessionDep) -> UtilityOut:
 @router.get("/rates", response_model=RatePage)
 def list_rates(
     session: SessionDep,
-    utility_id: str | None = None,
+    utility_id: UtilityIdQuery = None,
     from_: Annotated[PeriodQuery, Query(alias="from")] = None,
     to: PeriodQuery = None,
     status: RateStatus | None = RateStatus.PUBLISHED,
@@ -57,7 +61,7 @@ def list_rates(
         session, service.RateFilter(utility_id, from_, to, status), limit=limit, offset=offset
     )
     return RatePage(
-        items=[RateOut.model_validate(r) for r in rows],
+        items=[RateOut.model_validate(rate) for rate in rows],
         pagination=PaginationOut(total=total, limit=limit, offset=offset),
     )
 
@@ -76,15 +80,15 @@ def get_rate(rate_id: int, session: SessionDep) -> RateDetailOut:
 def _export_rows(session: Session) -> list[dict[str, object]]:
     return [
         ExportRow(
-            observation_id=r.id,
-            source_url=s.url,
-            source_fetched_at=s.fetched_at,
-            source_sha256=s.sha256,
-            **RateOut.model_validate(r).model_dump(
+            observation_id=rate.id,
+            source_url=source.url,
+            source_fetched_at=source.fetched_at,
+            source_sha256=source.sha256,
+            **RateOut.model_validate(rate).model_dump(
                 include=set(ExportRow.model_fields) - {"observation_id"}
             ),
         ).model_dump(mode="json")
-        for r, s in service.published_rates_with_sources(session)
+        for rate, source in service.published_rates_with_sources(session)
     ]
 
 

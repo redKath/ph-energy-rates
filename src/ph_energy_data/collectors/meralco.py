@@ -1,13 +1,21 @@
 import io
 import re
-from datetime import datetime
 from decimal import Decimal
 from urllib.parse import urljoin
 
 import pdfplumber
 from bs4 import BeautifulSoup
+from pdfplumber.utils.exceptions import PdfminerException
 
-from ph_energy_data.collectors.base import Collector, FetchedDocument, Fetcher
+from ph_energy_data.collectors.base import (
+    Collector,
+    Discovery,
+    ExtractionError,
+    FetchedDocument,
+    Fetcher,
+    ReferenceTotals,
+    period_from_month_text,
+)
 from ph_energy_data.domain.enums import ExtractionMethod, RateBasis, UtilityType
 from ph_energy_data.domain.models import ExtractedRate, Utility
 
@@ -38,10 +46,10 @@ def _money(text: str) -> Decimal:
 def _period(text: str) -> str:
     heading = _HEADING_PERIOD.search(text)
     if heading is None:
-        raise ValueError("Meralco billing month not found")
+        raise ExtractionError("Meralco billing month not found")
     if heading.group(1):
-        return datetime.strptime(heading.group(1), "%B %Y").strftime("%Y-%m")
-    return datetime.strptime(heading.group(2), "%b-%y").strftime("%Y-%m")
+        return period_from_month_text(heading.group(1), "%B %Y")
+    return period_from_month_text(heading.group(2), "%b-%y")
 
 
 class MeralcoCollector(Collector):
@@ -52,62 +60,63 @@ class MeralcoCollector(Collector):
         aliases=["Meralco"],
     )
 
-    def discover(self, fetcher: Fetcher) -> list[str]:
+    def discover(self, fetcher: Fetcher) -> Discovery:
         urls: list[str] = []
         for page in range(MAX_PAGES):
             listing = fetcher.get(f"{LISTING_URL}?page={page}")
             soup = BeautifulSoup(listing.content, "html.parser")
             found = [
-                urljoin(listing.url, str(a["href"]))
-                for a in soup.find_all("a", href=True)
-                if _BILLS_LINK.search(str(a["href"]))
+                urljoin(listing.url, str(link["href"]))
+                for link in soup.find_all("a", href=True)
+                if _BILLS_LINK.search(str(link["href"]))
             ]
             if not found:
                 break
-            urls.extend(u for u in found if u not in urls)
-        return urls
+            urls.extend(url for url in found if url not in urls)
+        return Discovery(urls)
 
-    def extract(self, document: FetchedDocument) -> list[ExtractedRate]:
+    def extract(
+        self, document: FetchedDocument, reference_totals: ReferenceTotals
+    ) -> list[ExtractedRate]:
         try:
             with pdfplumber.open(io.BytesIO(document.content)) as pdf:
                 text = pdf.pages[0].extract_text() or ""
-        except Exception as exc:
-            raise ValueError(f"unreadable Meralco PDF: {exc}") from exc
-
-        period = _period(text)
-        url_period = _URL_PERIOD.search(document.url)
-        if url_period and f"{url_period.group(1)}-{url_period.group(2)}" != period:
-            raise ValueError(f"PDF is for {period} but URL says {url_period.group(0)}")
-
-        if "For Non-Lifeline Customers" not in text:
-            raise ValueError("Meralco non-lifeline table not found")
-        bill = rate = None
-        for raw in text.split("For Non-Lifeline Customers", 1)[1].splitlines():
-            line = _SPLIT_NUMBER.sub(lambda m: m.group(1), raw.strip())
-            line = _SPLIT_TAIL.sub(lambda m: m.group(1) + m.group(2), line)
-            bill = bill or _BILL_ROW.match(line)
-            rate = rate or _RATE_ROW.match(line)
-        if bill is None or rate is None:
-            raise ValueError(f"no {_TYPICAL_KWH} kWh row in Meralco bills table")
-
-        # The page prints the overall rate per kWh and the bill in pesos for 200 kWh;
-        # the two must agree, which also catches digits garbled by the PDF text layer.
-        generation, overall = Decimal(rate.group(1)), Decimal(rate.group(2))
-        bill_generation, bill_total = _money(bill.group(1)), _money(bill.group(2))
-        if abs(bill_total / _TYPICAL_KWH - overall) > _TOLERANCE:
-            raise ValueError(f"overall rate {overall} disagrees with bill total {bill_total}")
-        if abs(bill_generation / _TYPICAL_KWH - generation) > _TOLERANCE:
-            raise ValueError(f"generation {generation} disagrees with bill {bill_generation}")
-        return [
-            ExtractedRate(
-                period=period,
-                rate_per_kwh=overall,
-                rate_basis=RateBasis.PUBLISHED_TOTAL,
-                generation_charge_per_kwh=generation,
-                extraction_method=ExtractionMethod.PDF_PARSER,
-                extractor_version=EXTRACTOR_VERSION,
-            )
-        ]
+        except PdfminerException as exc:
+            raise ExtractionError(f"unreadable Meralco PDF: {exc}") from exc
+        return [parse_bills_text(text, document.url)]
 
 
-collector = MeralcoCollector()
+def parse_bills_text(text: str, url: str) -> ExtractedRate:
+    """Residential rate for the month printed on the first page of a Meralco bills PDF."""
+    period = _period(text)
+    url_period = _URL_PERIOD.search(url)
+    if url_period and f"{url_period.group(1)}-{url_period.group(2)}" != period:
+        raise ExtractionError(f"PDF is for {period} but URL says {url_period.group(0)}")
+
+    if "For Non-Lifeline Customers" not in text:
+        raise ExtractionError("Meralco non-lifeline table not found")
+    bill = rate = None
+    for raw_line in text.split("For Non-Lifeline Customers", 1)[1].splitlines():
+        line = _SPLIT_NUMBER.sub(lambda match: match.group(1), raw_line.strip())
+        line = _SPLIT_TAIL.sub(lambda match: match.group(1) + match.group(2), line)
+        bill = bill or _BILL_ROW.match(line)
+        rate = rate or _RATE_ROW.match(line)
+    if bill is None or rate is None:
+        raise ExtractionError(f"no {_TYPICAL_KWH} kWh row in Meralco bills table")
+
+    # The page prints the overall rate per kWh and the bill in pesos for 200 kWh;
+    # the two must agree, which also catches digits garbled by the PDF text layer.
+    generation, overall = Decimal(rate.group(1)), Decimal(rate.group(2))
+    bill_generation, bill_total = _money(bill.group(1)), _money(bill.group(2))
+    if abs(bill_total / _TYPICAL_KWH - overall) > _TOLERANCE:
+        raise ExtractionError(f"overall rate {overall} disagrees with bill total {bill_total}")
+    if abs(bill_generation / _TYPICAL_KWH - generation) > _TOLERANCE:
+        raise ExtractionError(f"generation {generation} disagrees with bill {bill_generation}")
+    return ExtractedRate(
+        period=period,
+        rate_per_kwh=overall,
+        rate_basis=RateBasis.PUBLISHED_TOTAL,
+        generation_charge_per_kwh=generation,
+        extraction_method=ExtractionMethod.PDF_PARSER,
+        extractor_version=EXTRACTOR_VERSION,
+    )

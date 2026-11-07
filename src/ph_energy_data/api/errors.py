@@ -30,7 +30,8 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         details = [
-            {"field": ".".join(map(str, e["loc"])), "message": e["msg"]} for e in exc.errors()
+            {"field": ".".join(map(str, error["loc"])), "message": error["msg"]}
+            for error in exc.errors()
         ]
         return JSONResponse(
             _body("validation_error", "invalid request parameters", details), status_code=422

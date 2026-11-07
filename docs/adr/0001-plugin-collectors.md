@@ -1,4 +1,6 @@
-# 1. One collector module per utility, discovered automatically
+# 1. One collector module per utility
+
+Status: the discovery mechanism is superseded by [ADR 4](0004-explicit-collector-registry.md).
 
 ## Context
 
@@ -6,7 +8,7 @@ Each utility publishes in its own format and changes it without notice. About 14
 
 ## Decision
 
-A collector is one module implementing `discover` and `extract`, exposing a `collector` instance. The registry imports every module in the package. The pipeline, storage and API know nothing about individual utilities.
+A collector is one module implementing `discover` and `extract`, that the registry lists. The pipeline, storage and API know nothing about individual utilities.
 
 ## Consequences
 

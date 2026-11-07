@@ -5,9 +5,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="PH_ENERGY_")
+    # .env is shared with docker compose, so keys meant for other tools are ignored.
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="PH_ENERGY_", extra="ignore")
 
-    database_url: str = "postgresql+psycopg://ph_energy:ph_energy@127.0.0.1:5432/ph_energy"
+    database_url: str
     archive_dir: Path = Path("data/archive")
     user_agent: str = "ph-energy-data/0.1 (+https://github.com/redKath/ph-energy-rates)"
     fetch_delay_seconds: float = 2.0

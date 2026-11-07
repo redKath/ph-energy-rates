@@ -1,10 +1,12 @@
 import re
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
+
+from ph_energy_data.collectors.base import ExtractionError, period_from_month_text
 
 _PERIOD = re.compile(r"month of ([A-Za-z]+)\s+(\d{4})", re.IGNORECASE)
 _NUMBER = re.compile(r"^(-?)(\d*\.?\d+)$")
+_TABLE_SEPARATOR = re.compile(r"^\|[\s:|-]+\|?$")
 _SUM_TOLERANCE = Decimal("0.0005")
 # Rows quoted per customer or per kW rather than per kWh.
 _NOT_PER_KWH = re.compile(r"RETAILCUSTOMERCHARGE|DEMAND|KW(?!H)")
@@ -17,13 +19,13 @@ class ParsedRates:
     generation_per_kwh: Decimal
 
 
-def _key(text: str) -> str:
-    """Label reduced to letters, so OCR spacing and punctuation drift is ignored."""
+def _letters_only(text: str) -> str:
+    """Label reduced to uppercase letters, so OCR spacing and punctuation drift is ignored."""
     return re.sub(r"[^A-Z]", "", text.upper())
 
 
-def _number(cell: str) -> Decimal | None:
-    """Decimal from a cell; negatives appear as `-0.1` or `(.1)`, otherwise None."""
+def _parse_number(cell: str) -> Decimal | None:
+    """Decimal from a cell (negatives appear as `-0.1` or `(.1)`), or None if not a number."""
     text = cell.replace(",", "").replace(" ", "")
     in_parentheses = text.startswith("(") and text.endswith(")")
     match = _NUMBER.match(text.strip("()"))
@@ -33,13 +35,17 @@ def _number(cell: str) -> Decimal | None:
     return -value if in_parentheses or match.group(1) else value
 
 
-def _rows(markdown: str) -> list[list[str]]:
+def _table_rows(markdown: str) -> list[list[str]]:
     rows = []
     for line in markdown.splitlines():
         line = line.strip()
-        if line.startswith("|") and not re.match(r"^\|[\s:|-]+\|?$", line):
+        if line.startswith("|") and not _TABLE_SEPARATOR.match(line):
             rows.append([cell.strip() for cell in line.strip("|").split("|")])
     return rows
+
+
+def _is_residential_header_cell(cell: str) -> bool:
+    return _letters_only(cell).startswith("RESIDENTIAL")
 
 
 def parse_rate_table(markdown: str) -> ParsedRates:
@@ -50,33 +56,31 @@ def parse_rate_table(markdown: str) -> ParsedRates:
     """
     period_match = _PERIOD.search(markdown)
     if period_match is None:
-        raise ValueError("CAPELCO billing month not found")
+        raise ExtractionError("CAPELCO billing month not found")
     month = period_match.group(1)[:3].title()
-    period = datetime.strptime(f"{month} {period_match.group(2)}", "%b %Y").strftime("%Y-%m")
+    period = period_from_month_text(f"{month} {period_match.group(2)}", "%b %Y")
 
-    rows = _rows(markdown)
+    rows = _table_rows(markdown)
     # Merged header cells can be read twice ("RESIDENTIAL RESIDENTIAL").
-    header = next((r for r in rows if any(_key(c).startswith("RESIDENTIAL") for c in r)), None)
+    header = next((row for row in rows if any(map(_is_residential_header_cell, row))), None)
     if header is None:
-        raise ValueError("CAPELCO residential column not found")
-    column = next(i for i, c in enumerate(header) if _key(c).startswith("RESIDENTIAL"))
+        raise ExtractionError("CAPELCO residential column not found")
+    column = next(index for index, cell in enumerate(header) if _is_residential_header_cell(cell))
 
     components: list[Decimal] = []
     generation: Decimal | None = None
     for row in rows[rows.index(header) + 1 :]:
         if len(row) <= column:
             continue
-        label, value = _key(row[0]), _number(row[column])
+        label, value = _letters_only(row[0]), _parse_number(row[column])
         if "TOTALRATEPERKWH" in label:
             if value is None:
-                raise ValueError("CAPELCO residential total not readable")
+                raise ExtractionError("CAPELCO residential total not readable")
             if generation is None:
-                raise ValueError("CAPELCO generation rate not found")
-            difference = abs(sum(components, Decimal(0)) - value)
-            if difference > _SUM_TOLERANCE:
-                raise ValueError(
-                    f"components sum to {sum(components, Decimal(0))} but total is {value}"
-                )
+                raise ExtractionError("CAPELCO generation rate not found")
+            components_sum = sum(components, Decimal(0))
+            if abs(components_sum - value) > _SUM_TOLERANCE:
+                raise ExtractionError(f"components sum to {components_sum} but total is {value}")
             return ParsedRates(period, value, generation)
         if value is None or _NOT_PER_KWH.search(label):
             continue
@@ -84,4 +88,4 @@ def parse_rate_table(markdown: str) -> ParsedRates:
             # Generation rate = adjusted generation rate + other generation adjustments (OGA).
             generation = (generation or Decimal(0)) + value
         components.append(value)
-    raise ValueError("CAPELCO total rate row not found")
+    raise ExtractionError("CAPELCO total rate row not found")

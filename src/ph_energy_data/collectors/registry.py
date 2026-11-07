@@ -1,19 +1,15 @@
-import importlib
-import pkgutil
-
-import ph_energy_data.collectors as package
 from ph_energy_data.collectors.base import Collector
+from ph_energy_data.collectors.beneco import BenecoCollector
+from ph_energy_data.collectors.capelco import CapelcoCollector
+from ph_energy_data.collectors.meralco import MeralcoCollector
+from ph_energy_data.extraction.docling_ocr import DoclingOcr
 
-_NOT_COLLECTORS = {"base", "fetcher", "registry"}
 
-
-def discover_collectors() -> dict[str, Collector]:
-    """Every module in this package that exposes a `collector` instance, keyed by utility id."""
-    found: dict[str, Collector] = {}
-    for module_info in pkgutil.iter_modules(package.__path__):
-        if module_info.name in _NOT_COLLECTORS:
-            continue
-        module = importlib.import_module(f"{package.__name__}.{module_info.name}")
-        collector = module.collector
-        found[collector.utility.id] = collector
-    return found
+def build_collectors() -> dict[str, Collector]:
+    """Every supported utility's collector, keyed by utility id."""
+    collectors: list[Collector] = [
+        BenecoCollector(),
+        CapelcoCollector(ocr=DoclingOcr()),
+        MeralcoCollector(),
+    ]
+    return {collector.utility.id: collector for collector in collectors}

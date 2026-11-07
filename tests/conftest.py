@@ -8,7 +8,16 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from ph_energy_data.collectors.base import Collector, FetchedDocument, Fetcher
+from ph_energy_data.collectors.base import (
+    Collector,
+    Discovery,
+    ExtractionError,
+    FetchedDocument,
+    Fetcher,
+    FetchError,
+    ReferenceTotals,
+)
+from ph_energy_data.config import Settings
 from ph_energy_data.domain.enums import ExtractionMethod, RateBasis, UtilityType
 from ph_energy_data.domain.models import ExtractedRate, Utility
 from ph_energy_data.storage.archive import LocalArchive
@@ -49,13 +58,15 @@ class StubCollector(Collector):
 
     utility = Utility(id="stub", name="Stub Cooperative", type=UtilityType.ELECTRIC_COOPERATIVE)
 
-    def discover(self, fetcher: Fetcher) -> list[str]:
-        return ["https://stub.test/rates"]
+    def discover(self, fetcher: Fetcher) -> Discovery:
+        return Discovery(["https://stub.test/rates"])
 
-    def extract(self, document: FetchedDocument) -> list[ExtractedRate]:
+    def extract(
+        self, document: FetchedDocument, reference_totals: ReferenceTotals
+    ) -> list[ExtractedRate]:
         lines = document.content.decode().splitlines()
         if not lines or lines[0] != "STUB":
-            raise ValueError("table not found")
+            raise ExtractionError("table not found")
         return [
             ExtractedRate(
                 period=period,
@@ -69,17 +80,21 @@ class StubCollector(Collector):
 
 
 class RoutingFetcher:
-    """Serves a canned document per URL; unlisted URLs raise like a failed download."""
+    """Serves a canned (content, content type) per URL prefix; unlisted URLs fail to download."""
 
-    def __init__(self, routes: dict[str, bytes], content_type: str = "text/html") -> None:
+    def __init__(self, routes: dict[str, tuple[bytes, str]]) -> None:
         self.routes = routes
-        self.content_type = content_type
 
     def get(self, url: str) -> FetchedDocument:
-        for prefix, content in self.routes.items():
+        for prefix, (content, content_type) in self.routes.items():
             if url.startswith(prefix):
-                return FetchedDocument(url, content, self.content_type, datetime.now(UTC))
-        raise ConnectionError(url)
+                return FetchedDocument(url, content, content_type, datetime.now(UTC))
+        raise FetchError(url)
+
+
+@pytest.fixture
+def settings() -> Settings:
+    return Settings(database_url="sqlite://")
 
 
 @pytest.fixture
@@ -88,7 +103,9 @@ def session_factory() -> Iterator[sessionmaker[Session]]:
         "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
     # SQLite ignores foreign keys by default; Postgres does not.
-    event.listen(engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
+    event.listen(
+        engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON")
+    )
     Base.metadata.create_all(engine)
     yield sessionmaker(engine)
     engine.dispose()
