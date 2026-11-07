@@ -7,7 +7,7 @@ from ph_energy_data.extraction.docling_ocr import DoclingOcr
 
 
 def test_missing_docling_install_explains_how_to_fix(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "docling.document_converter", None)
+    monkeypatch.setitem(sys.modules, "docling", None)
     with pytest.raises(RuntimeError, match="--extra ocr"):
         DoclingOcr().first_page_markdown(b"%PDF")
 
