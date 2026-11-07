@@ -43,6 +43,16 @@ Use `127.0.0.1` rather than `localhost` in the database URL: on Windows, Docker'
 | `GET /v1/exports/rates.csv`, `.json` | Published rates with provenance |
 | `GET /health` | |
 
+### Screenshots
+
+Query a utility's monthly rates:
+
+![GET /v1/rates for BENECO, showing monthly rate, generation charge and status](docs/images/api-list-rates.png)
+
+Every rate links to the document it came from, with the fetch time and SHA-256:
+
+![GET /v1/rates/50, showing the source URL, fetch time and SHA-256](docs/images/api-rate-with-source.png)
+
 ## Development
 
 ```
